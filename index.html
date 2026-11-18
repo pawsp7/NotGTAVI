@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Port Solana</title>
+<meta name="description" content="Port Solana: an original open-world crime-caper sandbox that runs in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;1,700&family=Barlow:wght@400;500;600&family=Monoton&display=swap">
+<style>
+/* Layout: full-bleed WebGL canvas with a HUD pinned to the corners (map bottom-left,
+   money and stars top-right, speedometer bottom-right, story text bottom-centre). */
+:root {
+  --ink: #0d0b1f;        /* night-indigo panels */
+  --ink-2: #1b1035;
+  --paper: #fff6ec;      /* warm white text */
+  --sun: #ff9e5e;        /* sunset orange */
+  --neon: #ff4fa3;       /* motel-sign pink */
+  --sea: #33e6ff;        /* surf cyan */
+  --gold: #ffd23f;       /* mission yellow */
+  --cash: #42e695;       /* money green */
+  --danger: #ff3b4f;
+  --muted: #b9b0c9;
+  --font-logo: "Monoton", "Barlow Condensed", Impact, sans-serif;
+  --font-hud: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
+  --font-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--paper); font-family: var(--font-body); }
+body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: none; }
+[hidden] { display: none !important; }
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+kbd { font-family: var(--font-hud); font-weight: 700; font-size: 0.85em; padding: 0.05em 0.45em; border-radius: 4px; background: var(--paper); color: var(--ink); margin-right: 0.35em; box-shadow: 0 2px 0 rgba(0,0,0,0.4); }
+button { font: inherit; }
+:focus-visible { outline: 3px solid var(--sea); outline-offset: 3px; }
+
+/* ---------- HUD ---------- */
+#hud { position: fixed; inset: 0; pointer-events: none; font-family: var(--font-hud); text-shadow: 0 2px 0 rgba(0,0,0,0.55), 0 0 12px rgba(0,0,0,0.35); }
+#topRight { position: absolute; top: calc(14px + var(--safe-t)); right: calc(18px + var(--safe-r)); display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+#clock { font-size: 18px; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); }
+#cash { font-size: 38px; font-weight: 700; color: var(--cash); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+#stars { display: flex; gap: 3px; height: 26px; }
+#stars .star svg { width: 24px; height: 24px; fill: rgba(255,255,255,0.12); stroke: rgba(0,0,0,0.6); stroke-width: 1.2; transition: fill .15s; }
+#stars .star.on svg { fill: var(--paper); filter: drop-shadow(0 0 6px rgba(255,255,255,0.4)); }
+#stars .star.dim svg { fill: rgba(255,255,255,0.35); }
+#health { width: 168px; height: 8px; border-radius: 4px; background: rgba(0,0,0,0.5); overflow: hidden; border: 1px solid rgba(255,255,255,0.15); }
+#healthFill { height: 100%; width: 100%; background: linear-gradient(90deg, var(--cash), #8bf7c0); transition: width .2s; }
+#healthFill.low { background: var(--danger); }
+
+#minimapWrap { position: absolute; left: calc(18px + var(--safe-l)); bottom: calc(18px + var(--safe-b)); width: 200px; height: 200px; border-radius: 50%; padding: 4px; background: conic-gradient(from 200deg, var(--neon), var(--sun), var(--gold), var(--sea), var(--neon)); box-shadow: 0 6px 24px rgba(0,0,0,0.45); }
+#minimap { width: 100%; height: 100%; border-radius: 50%; display: block; background: #17405e; }
+
+#speedo { position: absolute; right: calc(22px + var(--safe-r)); bottom: calc(20px + var(--safe-b)); text-align: right; opacity: 0; transform: translateY(10px); transition: opacity .25s, transform .25s; }
+#speedo.on { opacity: 1; transform: none; }
+#speedVal { font-size: 64px; font-weight: 700; font-style: italic; line-height: 0.9; font-variant-numeric: tabular-nums; }
+#speedo small { font-size: 18px; font-weight: 600; letter-spacing: 0.12em; color: var(--sun); margin-left: 6px; }
+#carName { font-size: 18px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+#carHealth { margin-left: auto; margin-top: 6px; width: 140px; height: 6px; border-radius: 3px; background: rgba(0,0,0,0.5); overflow: hidden; }
+#carHealthFill { height: 100%; width: 100%; background: var(--sea); transition: width .2s; }
+#carHealthFill.low { background: var(--danger); }
+
+#toasts { position: absolute; top: calc(16px + var(--safe-t)); left: calc(18px + var(--safe-l)); display: flex; flex-direction: column; gap: 8px; max-width: min(380px, 60vw); }
+.toast { font-family: var(--font-body); font-size: 15px; font-weight: 500; text-shadow: none; background: rgba(13,11,31,0.86); border-left: 4px solid var(--sea); padding: 9px 14px; border-radius: 4px; animation: tin .25s ease-out; box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
+.toast.warn { border-color: var(--danger); }
+.toast.good { border-color: var(--cash); }
+.toast.cash { border-color: var(--cash); font-family: var(--font-hud); font-size: 22px; font-weight: 700; color: var(--cash); padding: 4px 12px; }
+.toast.out { opacity: 0; transform: translateX(-12px); transition: all .35s; }
+@keyframes tin { from { opacity: 0; transform: translateX(-14px); } }
+
+#timer { position: absolute; top: calc(16px + var(--safe-t)); left: 50%; transform: translateX(-50%); font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--gold); }
+#timer.low { color: var(--danger); animation: pulse .5s infinite alternate; }
+@keyframes pulse { to { transform: translateX(-50%) scale(1.08); } }
+#radio { position: absolute; top: calc(70px + var(--safe-t)); left: 50%; transform: translate(-50%, -8px); text-align: center; opacity: 0; transition: all .3s; }
+#radio.on { opacity: 1; transform: translate(-50%, 0); }
+#radio b { display: block; font-size: 26px; letter-spacing: 0.1em; color: var(--sea); }
+#radio span { font-size: 15px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+
+#bottomCenter { position: absolute; left: 50%; bottom: calc(26px + var(--safe-b)); transform: translateX(-50%); width: min(720px, calc(100vw - 520px)); min-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+#subtitle { font-family: var(--font-body); font-size: 19px; font-weight: 500; line-height: 1.35; opacity: 0; transition: opacity .2s; text-wrap: balance; }
+#subtitle.on { opacity: 1; }
+#subtitle b { font-family: var(--font-hud); color: var(--gold); letter-spacing: 0.1em; margin-right: 6px; }
+#objective { font-family: var(--font-body); font-size: 16px; padding: 7px 16px; border-radius: 6px; background: rgba(13,11,31,0.72); opacity: 0; transition: opacity .2s; text-shadow: none; }
+#objective.on { opacity: 1; }
+#objective b { color: var(--gold); font-weight: 600; }
+#objective .dim { color: var(--muted); }
+#prompt { font-family: var(--font-body); font-size: 16px; font-weight: 500; padding: 6px 14px; border-radius: 6px; background: rgba(13,11,31,0.82); opacity: 0; transition: opacity .15s; text-shadow: none; }
+#prompt.on { opacity: 1; }
+
+#bigMsg { position: absolute; top: 34%; left: 0; right: 0; text-align: center; opacity: 0; transform: scale(1.12); transition: opacity .3s, transform .35s; pointer-events: none; padding: 0 16px; }
+#bigMsg.show { opacity: 1; transform: none; }
+#bigTitle { font-size: clamp(44px, 9vw, 96px); font-weight: 700; font-style: italic; letter-spacing: 0.04em; line-height: 1; }
+#bigSub { font-size: clamp(18px, 2.6vw, 26px); font-weight: 600; letter-spacing: 0.08em; margin-top: 6px; color: var(--paper); }
+#bigMsg.pass #bigTitle { color: var(--gold); }
+#bigMsg.pass #bigSub { color: var(--cash); }
+#bigMsg.fail #bigTitle { color: var(--danger); }
+#bigMsg.title #bigTitle { color: var(--paper); -webkit-text-stroke: 1px rgba(0,0,0,0.4); }
+#bigMsg.title #bigSub { color: var(--sun); }
+#bigMsg.stunt #bigTitle { font-size: clamp(30px, 5vw, 52px); color: var(--sea); }
+#bigMsg.stunt { top: 22%; }
+#bigMsg.count #bigTitle { font-size: clamp(70px, 14vw, 150px); color: var(--neon); }
+
+#damage { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 55%, rgba(255,30,60,0.55)); opacity: 0; }
+#damage.hit { animation: hurt .5s ease-out; }
+@keyframes hurt { from { opacity: 1; } to { opacity: 0; } }
+#fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .45s; }
+#fade.on { opacity: 1; }
+
+/* ---------- overlays ---------- */
+.overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: calc(24px + var(--safe-t)) max(16px, var(--safe-r)) calc(24px + var(--safe-b)) max(16px, var(--safe-l)); }
+#title { background: linear-gradient(180deg, rgba(13,11,31,0.15) 0%, rgba(13,11,31,0.35) 45%, rgba(13,11,31,0.92) 100%); overflow-y: auto; align-items: flex-end; }
+.titleInner { width: min(980px, 100%); display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 36px; align-items: end; }
+.logo { font-family: var(--font-logo); font-weight: 400; font-size: clamp(54px, 10vw, 128px); line-height: 0.95; margin: 0; letter-spacing: 0.02em; background: linear-gradient(180deg, var(--gold) 0%, var(--sun) 40%, var(--neon) 75%, #b45cff 100%); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 0 18px rgba(255,79,163,0.45)); text-wrap: balance; }
+.tag { font-family: var(--font-hud); font-size: clamp(18px, 2.4vw, 24px); font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--sea); margin: 10px 0 0; }
+.blurb { font-size: 16px; line-height: 1.55; color: var(--paper); max-width: 46ch; margin: 14px 0 22px; opacity: 0.92; }
+.cta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.btn { pointer-events: auto; cursor: pointer; border: 0; border-radius: 6px; padding: 13px 30px; font-family: var(--font-hud); font-size: 22px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); background: linear-gradient(90deg, var(--gold), var(--sun)); box-shadow: 0 6px 0 #a84a2b, 0 10px 30px rgba(255,120,80,0.35); transition: transform .1s, box-shadow .1s; }
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #a84a2b; }
+.btn.ghost { background: transparent; color: var(--paper); box-shadow: inset 0 0 0 2px rgba(255,255,255,0.35); font-size: 18px; padding: 10px 20px; }
+.btn.ghost:active { box-shadow: inset 0 0 0 2px var(--sea); }
+#titleProgress { font-family: var(--font-hud); font-size: 16px; letter-spacing: 0.06em; color: var(--muted); }
+.controls { background: rgba(13,11,31,0.78); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 18px 20px; font-size: 14px; }
+.controls h2 { font-family: var(--font-hud); font-size: 16px; letter-spacing: 0.2em; text-transform: uppercase; margin: 0 0 10px; color: var(--sun); font-weight: 700; }
+.controls dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+.controls dt { text-align: right; white-space: nowrap; }
+.controls dd { margin: 0; color: var(--muted); }
+.controls .note { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.controls dl.touchOnly { display: none; }
+body.touch .controls dl.touchOnly { display: grid; }
+body.touch .controls dl.deskOnly { display: none; }
+
+#pause, #bigMap { background: rgba(13,11,31,0.78); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.panel { width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; }
+.panel h2 { font-family: var(--font-logo); font-weight: 400; font-size: 46px; margin: 0 0 8px; color: var(--neon); text-align: center; }
+.panel .btn { width: 100%; }
+.panel .btn.ghost { width: 100%; }
+#bigMap { flex-direction: column; gap: 14px; }
+#bigMap h2 { font-family: var(--font-hud); letter-spacing: 0.22em; margin: 0; font-size: 22px; color: var(--sun); }
+#bigMapCanvas { border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); max-width: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center; font-family: var(--font-hud); font-size: 16px; letter-spacing: 0.05em; color: var(--muted); }
+.legend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+
+#loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--ink); font-family: var(--font-hud); font-size: 22px; letter-spacing: 0.25em; color: var(--sun); text-transform: uppercase; }
+#bootError { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: var(--ink); padding: 24px; text-align: center; }
+#bootError code { color: var(--danger); font-size: 13px; max-width: 90vw; overflow-wrap: anywhere; }
+
+/* ---------- touch controls ---------- */
+#touch { position: fixed; inset: 0; pointer-events: none; }
+#joyZone { position: absolute; left: 0; bottom: 0; width: 45%; height: 60%; pointer-events: auto; }
+#lookZone { position: absolute; right: 0; top: 0; width: 55%; height: 100%; pointer-events: auto; }
+#joyBase { position: absolute; width: 124px; height: 124px; margin: -62px 0 0 -62px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(13,11,31,0.25); opacity: 0; pointer-events: none; }
+#joyBase.on { opacity: 1; }
+#joyKnob { position: absolute; left: 37px; top: 37px; width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,0.75); }
+.tbtns { position: absolute; right: calc(14px + var(--safe-r)); bottom: calc(150px + var(--safe-b)); display: grid; grid-template-columns: repeat(2, 64px); gap: 12px; pointer-events: none; }
+.tbtn { pointer-events: auto; width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.4); background: rgba(13,11,31,0.55); color: var(--paper); font-family: var(--font-hud); font-weight: 700; font-size: 15px; letter-spacing: 0.06em; display: flex; align-items: center; justify-content: center; }
+.tbtn.down { background: rgba(255,79,163,0.6); }
+.tbtn.big { border-color: var(--gold); color: var(--gold); }
+.ttop { position: absolute; top: calc(118px + var(--safe-t)); right: calc(14px + var(--safe-r)); display: flex; gap: 8px; pointer-events: auto; }
+.ttop button { border: 1px solid rgba(255,255,255,0.3); background: rgba(13,11,31,0.6); color: var(--paper); border-radius: 6px; font-family: var(--font-hud); font-size: 14px; letter-spacing: 0.08em; padding: 6px 10px; }
+body.touch .ttop { top: calc(10px + var(--safe-t)); left: calc(12px + var(--safe-l)); right: auto; }
+body.touch #toasts { top: calc(52px + var(--safe-t)); }
+body.touch .tbtns { bottom: calc(14px + var(--safe-b)); grid-template-columns: repeat(2, 58px); gap: 10px; }
+body.touch .tbtn { width: 58px; height: 58px; font-size: 14px; }
+body.touch #speedo { bottom: calc(146px + var(--safe-b)); }
+body.touch #speedVal { font-size: 44px; }
+body.touch #bottomCenter { bottom: calc(12px + var(--safe-b)); width: calc(100vw - 330px - var(--safe-l) - var(--safe-r)); min-width: 0; gap: 6px; }
+body.touch #subtitle { font-size: 15px; }
+body.touch #objective, body.touch #prompt { font-size: 13px; padding: 5px 10px; }
+@media (max-width: 640px) {
+  body.touch #bottomCenter { width: calc(100vw - 32px); bottom: calc(150px + var(--safe-b)); }
+  body.touch #speedo { bottom: auto; top: calc(130px + var(--safe-t)); }
+}
+@media (max-height: 520px) {
+  #topRight { gap: 2px; top: calc(8px + var(--safe-t)); }
+  #clock { font-size: 14px; }
+  #cash { font-size: 26px; }
+  #stars { height: 20px; }
+  #stars .star svg { width: 18px; height: 18px; }
+  #health { width: 110px; height: 6px; }
+  #minimapWrap { width: 120px; height: 120px; left: calc(10px + var(--safe-l)); bottom: calc(10px + var(--safe-b)); }
+  #timer { font-size: 30px; top: calc(8px + var(--safe-t)); }
+  #radio { top: calc(46px + var(--safe-t)); }
+  #radio b { font-size: 20px; }
+  #bigTitle { font-size: clamp(36px, 8vw, 64px); }
+  #bigMsg { top: 26%; }
+}
+
+@media (max-width: 760px) {
+  .titleInner { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  #minimapWrap { width: 132px; height: 132px; left: calc(10px + var(--safe-l)); bottom: calc(10px + var(--safe-b)); }
+  #cash { font-size: 30px; }
+  #bottomCenter { width: calc(100vw - 32px); min-width: 0; bottom: calc(150px + var(--safe-b)); }
+  #subtitle { font-size: 16px; }
+  #objective, #prompt { font-size: 14px; }
+  #speedVal { font-size: 46px; }
+  #health { width: 120px; }
+  .blurb { font-size: 15px; margin: 10px 0 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0" aria-label="Port Solana game view"></canvas>
+
+<div id="hud" hidden>
+  <div id="topRight">
+    <div id="clock">17:00</div>
+    <div id="cash">$0</div>
+    <div id="stars" aria-label="Wanted level"></div>
+    <div id="health" aria-label="Health"><div id="healthFill"></div></div>
+  </div>
+  <div id="toasts"></div>
+  <div id="timer" hidden></div>
+  <div id="radio"></div>
+  <div id="minimapWrap"><canvas id="minimap" width="400" height="400"></canvas></div>
+  <div id="speedo">
+    <div><span id="speedVal">0</span><small>MPH</small></div>
+    <div id="carName"></div>
+    <div id="carHealth"><div id="carHealthFill"></div></div>
+  </div>
+  <div id="bottomCenter">
+    <div id="subtitle"></div>
+    <div id="objective"></div>
+    <div id="prompt"></div>
+  </div>
+  <div id="bigMsg"><div id="bigTitle"></div><div id="bigSub"></div></div>
+</div>
+<div id="damage"></div>
+<div id="fade"></div>
+
+<div id="touch" hidden>
+  <div id="lookZone"></div>
+  <div id="joyZone"></div>
+  <div id="joyBase"><div id="joyKnob"></div></div>
+  <div class="tbtns">
+    <button class="tbtn" data-act="attack" type="button">HIT</button>
+    <button class="tbtn big" data-act="enter" type="button">CAR</button>
+    <button class="tbtn" data-act="sprint" type="button">RUN</button>
+    <button class="tbtn" data-act="jump" type="button">JUMP</button>
+  </div>
+  <div class="ttop">
+    <button id="touchRadio" type="button">RADIO</button>
+    <button id="touchMap" type="button">MAP</button>
+    <button id="touchPause" type="button">PAUSE</button>
+  </div>
+</div>
+
+<div id="title" class="overlay">
+  <div class="titleInner">
+    <div>
+      <h1 class="logo">Port Solana</h1>
+      <p class="tag">Sun · Surf · Bad decisions</p>
+      <p class="blurb">The neon is buzzing and the coast road is open. Steal a ride, run jobs for Nico at the Moonwake Diner, outrun Precinct 4 and catch the sunset over the bay.</p>
+      <div class="cta">
+        <button id="playBtn" class="btn" type="button">Play</button>
+        <span id="titleProgress"></span>
+      </div>
+    </div>
+    <div class="controls">
+      <h2>Controls</h2>
+      <dl class="deskOnly">
+        <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Walk / drive</dd>
+        <dt>Mouse</dt><dd>Look around (click to capture)</dd>
+        <dt><kbd>F</kbd></dt><dd>Get in, steal or leave a car</dd>
+        <dt><kbd>Shift</kbd></dt><dd>Sprint</dd>
+        <dt><kbd>Space</kbd></dt><dd>Jump / handbrake</dd>
+        <dt>Click or <kbd>Q</kbd></dt><dd>Punch</dd>
+        <dt><kbd>H</kbd> <kbd>R</kbd></dt><dd>Horn / change radio station</dd>
+        <dt><kbd>M</kbd> <kbd>C</kbd></dt><dd>Map / camera distance</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Pause</dd>
+      </dl>
+      <dl class="touchOnly">
+        <dt>Left thumb</dt><dd>Move. In a car, push up to drive and down to brake.</dd>
+        <dt>Right side</dt><dd>Drag to look around</dd>
+        <dt>CAR</dt><dd>Get in, steal or leave a car</dd>
+        <dt>JUMP</dt><dd>Jump, or handbrake when driving</dd>
+      </dl>
+      <p class="note">Stars mean the police are after you. Break line of sight to lose them, or pay $150 at a Spray Shack. Port Solana is an original game made for this demo.</p>
+    </div>
+  </div>
+</div>
+
+<div id="pause" class="overlay" hidden>
+  <div class="panel">
+    <h2>Paused</h2>
+    <button id="resumeBtn" class="btn" type="button">Resume</button>
+    <button id="qualityBtn" class="btn ghost" type="button">Graphics: High</button>
+    <button id="musicBtn" class="btn ghost" type="button">Radio volume: On</button>
+    <button id="resetBtn" class="btn ghost" type="button">Reset progress</button>
+  </div>
+</div>
+
+<div id="bigMap" class="overlay" hidden>
+  <h2>PORT SOLANA</h2>
+  <canvas id="bigMapCanvas"></canvas>
+  <div class="legend">
+    <span><i style="background:#ffd23f"></i>Nico / objective</span>
+    <span><i style="background:#ff4fa3"></i>Race checkpoint</span>
+    <span><i style="background:#5cff9d;border-radius:2px"></i>Spray Shack</span>
+    <span><i style="background:#42e695"></i>Cash stash</span>
+    <span><i style="background:#ff3344"></i>Police</span>
+    <span><i style="background:#c77dff"></i>GPS route</span>
+  </div>
+  <button id="mapClose" class="btn ghost" type="button">Close map</button>
+</div>
+
+<div id="loading">Building Port Solana…</div>
+<div id="bootError" hidden>
+  <p>Port Solana needs WebGL, and it could not start in this browser.</p>
+  <code></code>
+</div>
+
+<!-- dev entry: serve this folder (npm run dev); `npm run build` makes a single offline file in dist/ -->
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

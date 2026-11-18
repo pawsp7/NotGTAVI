@@ -1,0 +1,17 @@
+{
+  "name": "port-solana",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Port Solana: an original open-world crime-caper sandbox demo that runs in the browser.",
+  "type": "module",
+  "scripts": {
+    "dev": "node tools/serve.js",
+    "build": "node tools/build.js"
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0"
+  }
+}
