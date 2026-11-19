@@ -9,6 +9,7 @@ const ACTIONS = {
   pause: ['Escape', 'KeyP'],
   camera: ['KeyC'],
   attack: ['KeyQ', 'KeyJ'],
+  cine: ['KeyV'],
 };
 
 // Keyboard, mouse (pointer lock or drag) and touch controls, folded into one set of axes and actions.

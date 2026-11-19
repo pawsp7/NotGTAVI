@@ -5,16 +5,18 @@ import {
 } from './config.js';
 import {
   roadTexture, intersectionTexture, sidewalkTexture, grassTexture, sandTexture, glowTexture, signTexture,
+  puddleTexture, waterNormalTexture,
 } from './textures.js';
 import { mergeColored, box, cyl, wedgeGeometry, QuadBuilder } from './geom.js';
 
 const CELL = 16;
 const cellKey = (cx, cz) => (cx + 512) * 4096 + (cz + 512);
 
-// Window-pattern facade shader injected into a Lambert material. Facades are
-// patterned from world position, so instanced boxes of any size get windows.
+// Window-pattern facade shader injected into a PBR material. Facades are
+// patterned from world position, so instanced boxes of any size get windows,
+// and the glass panes reflect the live sky.
 function makeFacadeMaterial(uniforms) {
-  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86, metalness: 0 });
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uNight = uniforms.uNight;
     shader.uniforms.uSkyTint = uniforms.uSkyTint;
@@ -52,6 +54,10 @@ function makeFacadeMaterial(uniforms) {
         `#include <color_fragment>
          float winLit = 0.0;
          float winTint = 0.0;
+         float winGlass = 0.0;
+         float winRnd = 0.0;
+         float wallGloss = 0.0;
+         float winBright = 1.0;
          {
            float wall = 1.0 - step(0.5, abs(vWNrm.y));
            vec2 tng = normalize(vec2(-vWNrm.z, vWNrm.x) + 1e-5);
@@ -73,25 +79,54 @@ function makeFacadeMaterial(uniforms) {
              litP = 0.25;
            }
            win *= wall * step(0.4, v);
-           vec2 nq = floor(vWNrm.xz * 1.5 + 0.5);
+           vec2 nq = floor(vWNrm.xz + 1.5); // face id, kept well away from rounding edges
            float rnd = h21(cell + vec2(dot(nq, vec2(17.0, 31.0)), floor(vStyle + 0.5) * 7.0));
            float tint = h21(cell.yx + 3.7);
-           vec3 glass = mix(vec3(0.10, 0.14, 0.20), uSkyTint, 0.45 + 0.25 * rnd);
+           vec3 glass = mix(vec3(0.30, 0.40, 0.50), uSkyTint, 0.25 + 0.2 * rnd);
            diffuseColor.rgb = mix(diffuseColor.rgb, glass, win * glassMix);
-           winLit = win * step(litP, rnd);
+           winLit = win * step(litP, rnd) * uNight;
            winTint = tint;
+           winBright = 0.3 + 1.1 * h21(cell * 1.7 + vec2(2.3, nq.x * 5.0 + nq.y));
+           winGlass = win * glassMix;
+           winRnd = rnd;
+           wallGloss = (vStyle > 1.5 && vStyle < 2.5) ? 1.0 : 0.0;
            // fake ambient occlusion at the base, darker roofs
            diffuseColor.rgb *= mix(0.72, 1.0, clamp(v / 3.0, 0.0, 1.0));
            diffuseColor.rgb *= 1.0 - 0.35 * step(0.5, vWNrm.y);
          }`
       )
       .replace(
+        '#include <metalnessmap_fragment>',
+        `#include <metalnessmap_fragment>
+         roughnessFactor = mix(mix(roughnessFactor, 0.55, wallGloss), 0.17 + 0.14 * winRnd, winGlass);
+         metalnessFactor = mix(metalnessFactor, 0.8, winGlass * (1.0 - winLit));`
+      )
+      .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-         totalEmissiveRadiance += mix(vec3(1.0, 0.74, 0.42), vec3(0.55, 0.75, 1.0), step(0.82, winTint)) * winLit * uNight * 0.85;`
+         totalEmissiveRadiance += mix(vec3(1.0, 0.7, 0.38), vec3(0.55, 0.75, 1.0), step(0.82, winTint)) * winLit * winBright * 1.25;`
       );
   };
-  mat.customProgramCacheKey = () => 'facade-v2';
+  mat.customProgramCacheKey = () => 'facade-pbr-2';
+  return mat;
+}
+
+// Asphalt / concrete that turns glossy with puddles when it rains.
+function makeWetMaterial(map, uniforms, puddleTex, scale = 0.37) {
+  const mat = new THREE.MeshStandardMaterial({ map, roughness: 0.92, metalness: 0 });
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uWet = uniforms.uWet;
+    shader.uniforms.tPuddle = { value: puddleTex };
+    shader.uniforms.uPudScale = { value: scale };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform float uWet; uniform sampler2D tPuddle; uniform float uPudScale;`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        float pud = texture2D(tPuddle, vMapUv * uPudScale).g;
+        roughnessFactor = mix(roughnessFactor, mix(0.32, 0.1, pud), uWet);
+        diffuseColor.rgb *= mix(1.0, mix(0.72, 0.42, pud), uWet);`);
+  };
+  mat.customProgramCacheKey = () => 'wet-street-1';
   return mat;
 }
 
@@ -108,7 +143,7 @@ export class World {
     this.showroomSpots = [];
     this.pedBlocks = [];
     this.sprays = [];
-    this.uniforms = { uNight: { value: 0 }, uSkyTint: { value: new THREE.Color(0.5, 0.6, 0.75) }, uTime: { value: 0 } };
+    this.uniforms = { uNight: { value: 0 }, uSkyTint: { value: new THREE.Color(0.5, 0.6, 0.75) }, uTime: { value: 0 }, uWet: { value: 0 } };
     this.nightMaterials = []; // { mat, base:Color, boost }
     this.lightPools = null;
     this.places = {};
@@ -321,6 +356,7 @@ export class World {
   _buildRoads(renderer) {
     const roadTex = roadTexture(renderer);
     const interTex = intersectionTexture(renderer);
+    this.puddles = puddleTexture();
     const qb = new QuadBuilder();
     const qi = new QuadBuilder();
     const e = ROAD_W / 2;
@@ -338,10 +374,10 @@ export class World {
         qi.rect(c - e, z - e, c + e, z + e, 0.021, (x, zz) => [(x - (c - e)) / ROAD_W, (zz - (z - e)) / ROAD_W]);
       }
     }
-    const roads = new THREE.Mesh(qb.build(), new THREE.MeshLambertMaterial({ map: roadTex }));
+    const roads = new THREE.Mesh(qb.build(), makeWetMaterial(roadTex, this.uniforms, this.puddles, 0.37));
     roads.receiveShadow = true;
     this.scene.add(roads);
-    const inters = new THREE.Mesh(qi.build(), new THREE.MeshLambertMaterial({ map: interTex }));
+    const inters = new THREE.Mesh(qi.build(), makeWetMaterial(interTex, this.uniforms, this.puddles, 0.7));
     inters.receiveShadow = true;
     this.scene.add(inters);
 
@@ -354,7 +390,7 @@ export class World {
     const scene = this.scene;
     const swTex = sidewalkTexture(renderer);
     swTex.repeat.set(BLOCK_W / 4, BLOCK_W / 4);
-    const plates = new THREE.InstancedMesh(box(BLOCK_W, CURB_H, BLOCK_W), new THREE.MeshLambertMaterial({ map: swTex }), N_BLOCKS * N_BLOCKS);
+    const plates = new THREE.InstancedMesh(box(BLOCK_W, CURB_H, BLOCK_W), makeWetMaterial(swTex, this.uniforms, this.puddles, 0.21), N_BLOCKS * N_BLOCKS);
     plates.receiveShadow = true;
     const inner = BLOCK_W - SIDEWALK * 2;
     const lawnTex = grassTex.clone();
@@ -594,7 +630,7 @@ export class World {
     simpleInstanced(awnings, new THREE.MeshLambertMaterial());
     const neonMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     simpleInstanced(neon, neonMat, false);
-    this.nightMaterials.push({ mat: neonMat, day: 0.75, night: 2.2 });
+    this.nightMaterials.push({ mat: neonMat, day: 0.8, night: 4.2 });
 
     // Parking spots along roads (both kerbs), skipping intersections.
     for (let k = 0; k <= N_BLOCKS; k++) {
@@ -670,10 +706,13 @@ export class World {
 
     // Ocean
     const waterGeo = new THREE.PlaneGeometry(1400, 1400, 1, 1);
+    const wn = waterNormalTexture();
+    wn.repeat.set(90, 90);
     const water = new THREE.Mesh(
       waterGeo,
-      new THREE.MeshPhongMaterial({ color: 0x1b8fa8, specular: 0xffffff, shininess: 90, transparent: true, opacity: 0.94 })
+      new THREE.MeshStandardMaterial({ color: 0x0c5368, roughness: 0.1, metalness: 0, normalMap: wn, normalScale: new THREE.Vector2(0.55, 0.55), envMapIntensity: 1.15 })
     );
+    this.waterNormal = wn;
     water.rotation.x = -Math.PI / 2;
     water.position.set(WATER_X + 700, 0.06, 0);
     scene.add(water);
@@ -808,7 +847,7 @@ export class World {
     poles.castShadow = true;
     for (const m of [poles, heads, pools]) { m.frustumCulled = false; this.scene.add(m); }
     this.lightPools = pools;
-    this.nightMaterials.push({ mat: headMat, day: 0.5, night: 2.5 });
+    this.nightMaterials.push({ mat: headMat, day: 0.5, night: 7 });
   }
 
   _armToward(x, z) {
@@ -879,7 +918,7 @@ export class World {
       const w = s.w || 10, h = s.h || 2;
       const tex = signTexture(s.text, s.bg, s.fg);
       const mat = new THREE.MeshBasicMaterial({ map: tex, color: 0xdddddd });
-      this.nightMaterials.push({ mat, day: 0.85, night: 1.35 });
+      this.nightMaterials.push({ mat, day: 0.85, night: 2.1 });
       const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
       let y = s.y;
       if (s.roof) {
@@ -920,7 +959,7 @@ export class World {
       roof.position.set(0, 6.2, 0);
       const tex = signTexture('SPRAY SHACK', '#111111', '#5cff9d');
       const smat = new THREE.MeshBasicMaterial({ map: tex });
-      this.nightMaterials.push({ mat: smat, day: 0.9, night: 1.5 });
+      this.nightMaterials.push({ mat: smat, day: 0.9, night: 2.4 });
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(8, 2), smat);
       sign.position.set(0, 7.6, sd.face * 6.3);
       if (sd.face < 0) sign.rotation.y = Math.PI;
@@ -967,13 +1006,19 @@ export class World {
   }
 
   // Per-frame visual updates driven by time of day.
-  update(dt, t, night) {
+  update(dt, t, night, wet = 0, hdr = 1) {
     this.uniforms.uNight.value = night;
+    this.uniforms.uWet.value = wet;
     for (const n of this.nightMaterials) {
-      const k = n.day + (n.night - n.day) * night;
+      let k = n.day + (n.night - n.day) * night;
+      if (k > 1) k = 1 + (k - 1) * hdr; // without bloom keep emitters in range
       n.mat.color.setRGB(k, k, k);
     }
-    if (this.lightPools) this.lightPools.material.opacity = night * 0.55;
+    if (this.lightPools) this.lightPools.material.opacity = night * 0.55 * (1 + wet * 0.7);
+    if (this.waterNormal) {
+      this.waterNormal.offset.x = (t * 0.011) % 1;
+      this.waterNormal.offset.y = (t * 0.007) % 1;
+    }
     if (this.lighthouseBeam) {
       this.lighthouseBeam.rotation.y = t * 0.8;
       this.lighthouseBeam.material.opacity = 0.05 + night * 0.22;

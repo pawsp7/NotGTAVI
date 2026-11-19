@@ -12,11 +12,16 @@ import { PedManager } from './ped.js';
 import { Wanted } from './wanted.js';
 import { Missions } from './missions.js';
 import { Pickups } from './pickups.js';
-import { CAR_TYPES } from './car.js';
+import { CAR_TYPES, updateCarLights } from './car.js';
+import { PostFX } from './post.js';
+import { Weather, WEATHER_LABEL, nextWeatherMode } from './weather.js';
+import { CineCam } from './cinecam.js';
 import { WATER_X, PARK_LANE, roadPos, clamp, dist2, fmtMoney, pick } from './config.js';
 
 const SAVE_KEY = 'port-solana-save-v1';
 const isTouch = typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window);
+const QUALITY = ['low', 'high', 'ultra'];
+const QUALITY_LABEL = { low: 'Low', high: 'High', ultra: 'Ultra (cinematic)' };
 
 function loadSave() {
   try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (_) { return null; }
@@ -26,7 +31,7 @@ class Game {
   constructor(canvas, boot) {
     this.canvas = canvas;
     const save = boot && boot.cash != null ? boot : loadSave() || {};
-    this.quality = save.quality || (isTouch ? 'low' : 'high');
+    this.quality = QUALITY.includes(save.quality) ? save.quality : (isTouch ? 'low' : 'ultra');
     this.cash = save.cash ?? 250;
     this.state = 'title';
     this.paused = false;
@@ -38,7 +43,7 @@ class Game {
     this.stunt = null;
     this.slowT = 0;
 
-    const r = new THREE.WebGLRenderer({ canvas, antialias: !isTouch, powerPreference: 'high-performance' });
+    const r = new THREE.WebGLRenderer({ canvas, antialias: !isTouch, powerPreference: 'high-performance', stencil: false });
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.05;
@@ -50,7 +55,9 @@ class Game {
 
     this.world = new World(this);
     this.world.build(r);
+    this.weather = new Weather(this);
     this.sky = new Sky(this);
+    this.post = new PostFX(this);
     this.effects = new Effects(this);
     this.audio = new AudioSystem(this);
     this.hud = new Hud(this);
@@ -62,7 +69,9 @@ class Game {
     this.wanted = new Wanted(this);
     this.missions = new Missions(this);
     this.pickups = new Pickups(this);
+    this.cine = new CineCam(this);
     this.missions.load(save.mission || 0);
+    if (save.weather) this.weather.setMode(save.weather);
     if (save.hour != null) this.sky.hour = save.hour;
 
     this.headlight = new THREE.SpotLight(0xfff0cf, 0, 55, 0.6, 0.55, 1);
@@ -94,20 +103,22 @@ class Game {
   // ---------- settings / save ----------
   setQuality(q, silent) {
     this.quality = q;
-    const high = q === 'high';
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, high ? 1.75 : 1));
-    this.sky.setShadows(high);
-    this.sky.sun.shadow.mapSize.set(high ? 2048 : 1024, high ? 2048 : 1024);
-    this.sky.fog.far = high ? 560 : 380;
-    this.traffic.setQuality(q);
-    this.peds.setQuality(q);
+    const dpr = window.devicePixelRatio || 1;
+    this.renderer.setPixelRatio(Math.min(dpr, q === 'ultra' ? 2 : q === 'high' ? 1.25 : 1));
+    this.sky.setQuality(q);
+    this.traffic.setQuality(q === 'low' ? 'low' : 'high');
+    this.peds.setQuality(q === 'low' ? 'low' : 'high');
+    this.weather.setQuality(q);
+    this.post.setQuality(q);
+    this.resize();
+    this.slowT = 0;
     const btn = document.getElementById('qualityBtn');
-    if (btn) btn.textContent = `Graphics: ${high ? 'High' : 'Low'}`;
+    if (btn) btn.textContent = `Graphics: ${QUALITY_LABEL[q]}`;
     if (!silent) this.save();
   }
 
   saveData() {
-    return { cash: Math.round(this.cash), mission: this.missions.index, quality: this.quality, hour: this.sky.hour };
+    return { cash: Math.round(this.cash), mission: this.missions.index, quality: this.quality, hour: this.sky.hour, weather: this.weather.mode };
   }
 
   save() {
@@ -119,6 +130,7 @@ class Game {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    if (this.post) this.post.resize();
   }
 
   // ---------- UI ----------
@@ -126,7 +138,15 @@ class Game {
     const $ = (id) => document.getElementById(id);
     $('playBtn').addEventListener('click', () => this.begin());
     $('resumeBtn').addEventListener('click', () => this.resume());
-    $('qualityBtn').addEventListener('click', () => this.setQuality(this.quality === 'high' ? 'low' : 'high'));
+    $('qualityBtn').addEventListener('click', () => this.setQuality(QUALITY[(QUALITY.indexOf(this.quality) + 1) % QUALITY.length]));
+    const wb = $('weatherBtn');
+    wb.textContent = `Weather: ${WEATHER_LABEL[this.weather.mode]}`;
+    wb.addEventListener('click', () => {
+      this.weather.setMode(nextWeatherMode(this.weather.mode));
+      wb.textContent = `Weather: ${WEATHER_LABEL[this.weather.mode]}`;
+      this.save();
+    });
+    $('cineBtn').addEventListener('click', () => { this.resume(); this.toggleCine(); });
     $('musicBtn').addEventListener('click', () => {
       const on = this.audio.musicVolume > 0;
       this.audio.setVolumes(on ? 0 : 0.32, this.audio.sfxVolume);
@@ -153,14 +173,22 @@ class Game {
       $('touchMap').addEventListener('click', () => (this.state === 'map' ? this.closeMap() : this.openMap()));
       $('touchPause').addEventListener('click', () => this.pause(true));
       $('touchRadio').addEventListener('click', () => this._radio());
+      $('touchCine').addEventListener('click', () => this.toggleCine());
     }
     const progress = $('titleProgress');
     if (progress) progress.textContent = this.missions.index > 0 ? `Saved game: ${this.missions.index} of ${this.missions.list.length} jobs done, ${fmtMoney(this.cash)}` : '';
     $('playBtn').textContent = this.missions.index > 0 ? 'Continue' : 'Play';
   }
 
+  toggleCine() {
+    if (this.state !== 'playing') return;
+    const on = this.cine.toggle();
+    this.hud.toast(on ? 'Cinematic camera on. Press V to return.' : 'Cinematic camera off', 'info', 2.2);
+  }
+
   begin() {
     this.audio.init();
+    this.cine.shot = null;
     document.getElementById('title').hidden = true;
     document.getElementById('hud').hidden = false;
     if (isTouch) this.input.setupTouch(document.getElementById('touch'));
@@ -444,7 +472,8 @@ class Game {
       this.audio.update(dt);
     }
     this.input.endFrame();
-    this.renderer.render(this.scene, this.camera);
+    this.post.update(dt);
+    this.post.render();
   }
 
   step(dt) {
@@ -457,6 +486,7 @@ class Game {
       if (inp.pressed('pause')) { this.pause(true); return; }
       if (inp.pressed('map')) { this.openMap(); return; }
       if (inp.pressed('radio')) this._radio();
+      if (inp.pressed('cine')) this.toggleCine();
       if (this.respawnT <= 0) pl.update(dt, inp);
       else if (pl.inCar) { pl.car.input.throttle = 0; pl.car.input.steer = 0; pl.car.input.handbrake = true; }
     }
@@ -476,13 +506,16 @@ class Game {
     for (const c of this.cars) if (dist2(c.x, c.z, cam.x, cam.z) < 120 * 120) this.effects.carFx(c, dt);
     this.effects.update(dt);
 
+    this.weather.update(dt);
     this.sky.update(dt, new THREE.Vector3(pl.x, 0, pl.z));
     this.night = this.sky.night;
-    this.world.update(dt, this.time, this.night);
+    const hdr = this.post.enabled ? 1 : 0.35;
+    this.world.update(dt, this.time, this.night, this.weather.wet, hdr);
     this._headlight();
+    this._beams();
 
-    if (playing) this.cameraRig.update(dt, inp);
-    else this._titleCamera(dt);
+    if (playing && !this.cine.active) this.cameraRig.update(dt, inp);
+    else this.cine.update(dt);
     this.audio.update(dt);
     if (playing) this.hud.update(dt);
 
@@ -492,10 +525,25 @@ class Game {
       if (this.respawnT <= 0) { this._respawn(); setTimeout(() => this.hud.fade(false), 250); }
     }
 
-    // automatic quality fallback on slow devices
-    if (playing && this.quality === 'high') {
-      if (this.frameAvg > 38) this.slowT += dt; else this.slowT = 0;
-      if (this.slowT > 4) { this.setQuality('low'); this.hud.toast('Switched to low graphics for a smoother frame rate', 'info'); this.slowT = 0; }
+    // automatic quality fallback on slow devices: ultra -> high -> low
+    if (playing && this.quality !== 'low' && this.time > 8) {
+      if (this.frameAvg > 36) this.slowT += dt; else this.slowT = Math.max(0, this.slowT - dt);
+      if (this.slowT > 4) {
+        const q = this.quality === 'ultra' ? 'high' : 'low';
+        this.setQuality(q);
+        this.hud.toast(`Switched to ${QUALITY_LABEL[q].toLowerCase()} graphics for a smoother frame rate`, 'info');
+      }
+    }
+  }
+
+  // Night-time light beams in front of nearby cars, more visible in rain.
+  _beams() {
+    const on = this.night > 0.2 && this.quality !== 'low';
+    const op = on ? this.night * (0.06 + this.weather.rain * 0.12) : 0;
+    updateCarLights(this.night, op, this.post.enabled ? 1 : 0.35);
+    const cam = this.camera.position;
+    for (const c of this.cars) {
+      c.beam.visible = on && !c.wrecked && !c.sinking && (c.driver || c.ai) && dist2(c.x, c.z, cam.x, cam.z) < 110 * 110;
     }
   }
 
@@ -507,17 +555,8 @@ class Game {
       const fx = Math.sin(c.heading), fz = Math.cos(c.heading);
       h.position.set(c.x + fx * 2, c.y + 1.1, c.z + fz * 2);
       h.target.position.set(c.x + fx * 22, c.y, c.z + fz * 22);
-      h.intensity = this.night * 60;
+      h.intensity = this.night * 28;
     } else h.intensity = 0;
-  }
-
-  _titleCamera(dt) {
-    const p = this.player;
-    const t = this.time * 0.05;
-    const r = 46;
-    this.camera.position.set(p.x - 30 + Math.cos(t) * r, 22 + Math.sin(t * 0.7) * 4, p.z + Math.sin(t) * r);
-    this.camera.lookAt(p.x - 10, 8, p.z);
-    this.cameraRig.yaw = Math.atan2(this.camera.position.x - p.x, this.camera.position.z - p.z);
   }
 }
 

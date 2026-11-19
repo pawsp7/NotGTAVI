@@ -46,19 +46,44 @@ export const TRAFFIC_MIX = ['breeze', 'breeze', 'sundial', 'sundial', 'sundial',
 const shared = {};
 function sharedMats() {
   if (shared.ready) return shared;
-  shared.detail = new THREE.MeshLambertMaterial({ vertexColors: true });
-  shared.charred = new THREE.MeshLambertMaterial({ color: 0x1c1c1c });
-  shared.wheel = new THREE.MeshLambertMaterial({ vertexColors: true });
-  shared.head = new THREE.MeshBasicMaterial({ color: 0xfff6d8 });
-  shared.tailOff = new THREE.MeshBasicMaterial({ color: 0x7a1010 });
-  shared.tailOn = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
-  shared.red = new THREE.MeshBasicMaterial({ color: 0xff2030 });
-  shared.blue = new THREE.MeshBasicMaterial({ color: 0x2050ff });
+  shared.detail = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.25 });
+  shared.glass = new THREE.MeshStandardMaterial({ color: 0x0b1117, roughness: 0.12, metalness: 0.85, envMapIntensity: 1.3 });
+  shared.charred = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 1 });
+  shared.wheel = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.2 });
+  // light colours are HDR (above 1) so the bloom pass makes them glow
+  shared.head = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.2, 1.15, 1.0) });
+  shared.tailOff = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.9, 0.05, 0.05) });
+  shared.tailOn = new THREE.MeshBasicMaterial({ color: new THREE.Color(7, 0.45, 0.35) });
+  shared.red = new THREE.MeshBasicMaterial({ color: new THREE.Color(9, 0.3, 0.4) });
+  shared.blue = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.3, 0.7, 9) });
   shared.off = new THREE.MeshBasicMaterial({ color: 0x2a2a2a });
-  shared.taxiSign = new THREE.MeshBasicMaterial({ color: 0xfff1a6 });
+  shared.taxiSign = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 2.1, 1.0) });
+  shared.beam = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0 } },
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform float uOpacity; varying vec2 vUv; void main(){ float a = pow(vUv.y, 2.2) * uOpacity; gl_FragColor = vec4(vec3(1.0, 0.93, 0.78) * a, 1.0); }',
+  });
+  const cone = new THREE.ConeGeometry(3.2, 16, 18, 1, true);
+  cone.rotateX(-Math.PI / 2);
+  cone.translate(0, 0, 8);
+  cone.scale(1, 0.45, 1);
+  cone.rotateX(0.06);
+  shared.beamGeo = cone;
   shared.ready = true;
   return shared;
 }
+
+// Per-frame light levels shared by every car (day running lights vs. night beams).
+export function updateCarLights(night, beamOpacity, hdr = 1) {
+  const m = sharedMats();
+  const k = 1.2 + (5.5 - 1.2) * night * hdr;
+  m.head.color.setRGB(k, k * 0.96, k * 0.85);
+  m.beam.uniforms.uOpacity.value = beamOpacity;
+}
+
 export function carMaterials() { return sharedMats(); }
 
 const geoCache = new Map();
@@ -68,6 +93,7 @@ function buildGeometry(type) {
   const L = t.len, W = t.wid, r = t.wheelR;
   const paint = [];
   const detail = [];
+  const glassParts = [];
   const heads = [];
   const tails = [];
   const glass = '#2b4258';
@@ -90,7 +116,7 @@ function buildGeometry(type) {
     detail.push({ geo: box(0.08, 0.36, 0.08), pos: [-W * 0.32, bodyTop + 0.18, -L / 2 + 0.25], color: dark });
   }
   // cabin glass + painted roof and pillars
-  detail.push({ geo: box(cabW, cabH, cabLen), pos: [0, bodyTop + cabH / 2, cabZ], color: glass });
+  glassParts.push({ geo: box(cabW, cabH, cabLen), pos: [0, bodyTop + cabH / 2, cabZ], color: glass });
   paint.push({ geo: box(cabW + 0.04, 0.08, cabLen * 0.92), pos: [0, bodyTop + cabH + 0.02, cabZ], color: '#ffffff' });
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     paint.push({ geo: box(0.1, cabH, 0.14), pos: [sx * (cabW / 2 + 0.01), bodyTop + cabH / 2, cabZ + sz * (cabLen / 2 - 0.07)], color: '#ffffff' });
@@ -117,6 +143,7 @@ function buildGeometry(type) {
   const out = {
     paint: mergeColored(paint),
     detail: mergeColored(detail),
+    glass: mergeColored(glassParts),
     heads: mergeColored(heads),
     tails: mergeColored(tails),
     bodyTop, cabH, cabZ, clear, cabLen,
@@ -183,17 +210,24 @@ export class Car {
     this.mesh.rotation.order = 'YXZ';
     this.body = new THREE.Group();
     this.mesh.add(this.body);
-    this.paintMat = new THREE.MeshLambertMaterial({ color: this.color });
+    // glossy clearcoat paint that picks up the sky
+    this.paintMat = new THREE.MeshPhysicalMaterial({ color: this.color, metalness: 0.45, roughness: 0.34, clearcoat: 1, clearcoatRoughness: 0.1 });
     this.paintMesh = new THREE.Mesh(g.paint, this.paintMat);
+    this.glassMesh = new THREE.Mesh(g.glass, m.glass);
+    this.glassMesh.castShadow = true;
+    this.beam = new THREE.Mesh(m.beamGeo, m.beam);
+    this.beam.position.set(0, g.clear + 0.45, this.type.len / 2);
+    this.beam.visible = false;
+    this.beam.renderOrder = 2;
     this.paintMesh.castShadow = true;
     this.detailMesh = new THREE.Mesh(g.detail, m.detail);
     this.detailMesh.castShadow = true;
     this.headMesh = new THREE.Mesh(g.heads, m.head);
     this.tailMesh = new THREE.Mesh(g.tails, m.tailOff);
-    this.body.add(this.paintMesh, this.detailMesh, this.headMesh, this.tailMesh);
+    this.body.add(this.paintMesh, this.detailMesh, this.glassMesh, this.headMesh, this.tailMesh, this.beam);
     if (this.type.police) {
       // white doors
-      const doors = new THREE.Mesh(box(this.type.wid + 0.02, 0.4, this.type.len * 0.45), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }));
+      const doors = new THREE.Mesh(box(this.type.wid + 0.02, 0.4, this.type.len * 0.45), new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.35, metalness: 0.3 }));
       doors.position.set(0, g.clear + 0.36, 0);
       this.body.add(doors);
       const top = g.bodyTop + g.cabH + 0.12;
@@ -207,7 +241,7 @@ export class Car {
       const sign = new THREE.Mesh(box(0.7, 0.22, 0.3), m.taxiSign);
       sign.position.set(0, g.bodyTop + g.cabH + 0.17, g.cabZ);
       this.body.add(sign);
-      const check = new THREE.Mesh(box(this.type.wid + 0.02, 0.12, this.type.len * 0.5), new THREE.MeshLambertMaterial({ color: 0x111111 }));
+      const check = new THREE.Mesh(box(this.type.wid + 0.02, 0.12, this.type.len * 0.5), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 }));
       check.position.set(0, g.clear + this.type.wid * 0.18, 0);
       this.body.add(check);
     }
@@ -268,8 +302,13 @@ export class Car {
     this.burning = 0;
     this.health = 0;
     this.paintMat.color.set(0x2b2b2b);
+    this.paintMat.clearcoat = 0;
+    this.paintMat.roughness = 1;
+    this.paintMat.metalness = 0;
     this.detailMesh.material = sharedMats().charred;
+    this.glassMesh.material = sharedMats().charred;
     this.headMesh.visible = false;
+    this.beam.visible = false;
     this.tailMesh.material = sharedMats().off;
     if (this.lightL) { this.lightL.material = sharedMats().off; this.lightR.material = sharedMats().off; }
     this.vy = 6;

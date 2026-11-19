@@ -105,6 +105,11 @@ button { font: inherit; }
 #bigMsg.stunt { top: 22%; }
 #bigMsg.count #bigTitle { font-size: clamp(70px, 14vw, 150px); color: var(--neon); }
 
+/* cinematic camera: only story text and big messages stay on screen */
+#hud.cine #topRight, #hud.cine #minimapWrap, #hud.cine #speedo, #hud.cine #toasts, #hud.cine #radio, #hud.cine #prompt, #hud.cine #objective { opacity: 0 !important; transition: opacity .4s; }
+#hud.cine #bottomCenter { bottom: calc(15vh + var(--safe-b)); }
+#title { background: linear-gradient(180deg, rgba(13,11,31,0) 0%, rgba(13,11,31,0.15) 50%, rgba(13,11,31,0.88) 100%) !important; }
+
 #damage { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 55%, rgba(255,30,60,0.55)); opacity: 0; }
 #damage.hit { animation: hurt .5s ease-out; }
 @keyframes hurt { from { opacity: 1; } to { opacity: 0; } }
@@ -113,8 +118,8 @@ button { font: inherit; }
 
 /* ---------- overlays ---------- */
 .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: calc(24px + var(--safe-t)) max(16px, var(--safe-r)) calc(24px + var(--safe-b)) max(16px, var(--safe-l)); }
-#title { background: linear-gradient(180deg, rgba(13,11,31,0.15) 0%, rgba(13,11,31,0.35) 45%, rgba(13,11,31,0.92) 100%); overflow-y: auto; align-items: flex-end; }
-.titleInner { width: min(980px, 100%); display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 36px; align-items: end; }
+#title { background: linear-gradient(180deg, rgba(13,11,31,0.15) 0%, rgba(13,11,31,0.35) 45%, rgba(13,11,31,0.92) 100%); overflow-y: auto; align-items: flex-start; }
+.titleInner { margin-top: auto; width: min(980px, 100%); display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 36px; align-items: end; }
 .logo { font-family: var(--font-logo); font-weight: 400; font-size: clamp(54px, 10vw, 128px); line-height: 0.95; margin: 0; letter-spacing: 0.02em; background: linear-gradient(180deg, var(--gold) 0%, var(--sun) 40%, var(--neon) 75%, #b45cff 100%); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 0 18px rgba(255,79,163,0.45)); text-wrap: balance; }
 .tag { font-family: var(--font-hud); font-size: clamp(18px, 2.4vw, 24px); font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--sea); margin: 10px 0 0; }
 .blurb { font-size: 16px; line-height: 1.55; color: var(--paper); max-width: 46ch; margin: 14px 0 22px; opacity: 0.92; }
@@ -247,6 +252,7 @@ body.touch #objective, body.touch #prompt { font-size: 13px; padding: 5px 10px; 
     <button class="tbtn" data-act="jump" type="button">JUMP</button>
   </div>
   <div class="ttop">
+    <button id="touchCine" type="button">CINE</button>
     <button id="touchRadio" type="button">RADIO</button>
     <button id="touchMap" type="button">MAP</button>
     <button id="touchPause" type="button">PAUSE</button>
@@ -275,6 +281,7 @@ body.touch #objective, body.touch #prompt { font-size: 13px; padding: 5px 10px; 
         <dt>Click or <kbd>Q</kbd></dt><dd>Punch</dd>
         <dt><kbd>H</kbd> <kbd>R</kbd></dt><dd>Horn / change radio station</dd>
         <dt><kbd>M</kbd> <kbd>C</kbd></dt><dd>Map / camera distance</dd>
+        <dt><kbd>V</kbd></dt><dd>Cinematic camera</dd>
         <dt><kbd>Esc</kbd></dt><dd>Pause</dd>
       </dl>
       <dl class="touchOnly">
@@ -292,7 +299,9 @@ body.touch #objective, body.touch #prompt { font-size: 13px; padding: 5px 10px; 
   <div class="panel">
     <h2>Paused</h2>
     <button id="resumeBtn" class="btn" type="button">Resume</button>
+    <button id="cineBtn" class="btn ghost" type="button">Cinematic camera</button>
     <button id="qualityBtn" class="btn ghost" type="button">Graphics: High</button>
+    <button id="weatherBtn" class="btn ghost" type="button">Weather: Auto</button>
     <button id="musicBtn" class="btn ghost" type="button">Radio volume: On</button>
     <button id="resetBtn" class="btn ghost" type="button">Reset progress</button>
   </div>
@@ -319,7 +328,7 @@ body.touch #objective, body.touch #prompt { font-size: 13px; padding: 5px 10px; 
 </div>
 
 <!-- dev entry: serve this folder (npm run dev); `npm run build` makes a single offline file in dist/ -->
-<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -94,6 +94,11 @@ export class AudioSystem {
     this.waveF = c.createBiquadFilter(); this.waveF.type = 'lowpass'; this.waveF.frequency.value = 500;
     this.waveG = c.createGain(); this.waveG.gain.value = 0;
     this.waveSrc.connect(this.waveF); this.waveF.connect(this.waveG); this.waveG.connect(this.sfx);
+    // rain hiss
+    this.rainSrc = this._loopNoise();
+    this.rainF = c.createBiquadFilter(); this.rainF.type = 'bandpass'; this.rainF.frequency.value = 3200; this.rainF.Q.value = 0.6;
+    this.rainG = c.createGain(); this.rainG.gain.value = 0;
+    this.rainSrc.connect(this.rainF); this.rainF.connect(this.rainG); this.rainG.connect(this.sfx);
     this.nextTime = c.currentTime + 0.1;
   }
 
@@ -219,6 +224,15 @@ export class AudioSystem {
     const a = Math.max(0.2, this._att(x, z, 120));
     this._noise(t, 0.9, 0.6 * a, 'lowpass', 1600);
   }
+  thunder() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const n = this._noise(t, 3.2, 0.7, 'lowpass', 900);
+    n.f.frequency.setValueAtTime(900, t);
+    n.f.frequency.exponentialRampToValueAtTime(90, t + 3);
+    const o = this._tone(t, 48, 2.4, 'sine', 0.5);
+    o.frequency.exponentialRampToValueAtTime(30, t + 2.2);
+  }
   checkpoint() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
@@ -320,6 +334,9 @@ export class AudioSystem {
     const shore = clamp(1 - Math.abs(g.camera.position.x - 404) / 90, 0, 1);
     const swell = 0.5 + 0.5 * Math.sin(now * 0.9);
     this.waveG.gain.setTargetAtTime(paused ? 0 : shore * (0.04 + swell * 0.08), now, 0.2);
+
+    const rain = g.weather ? g.weather.rain : 0;
+    this.rainG.gain.setTargetAtTime(paused ? 0 : rain * (car ? 0.1 : 0.16), now, 0.3);
 
     // radio plays in cars
     const wantMusic = !!car && !paused && this.station < STATIONS.length && !car.wrecked;

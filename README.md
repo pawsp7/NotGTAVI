@@ -19,6 +19,11 @@ Everything is made in code: the city, cars, people, textures, sky and radio musi
 - Wanted stars: crimes build heat, patrol cars chase and box you in, and you lose them by breaking line of sight or paying a Spray Shack
 - Three story missions: a timed delivery, a showroom car theft with a police escape, and a checkpoint street race
 - Day/night cycle (a full day takes 12 minutes) with lit windows, neon, street lights and headlights
+- Cinematic rendering: HDR bloom, sun shafts and lens flare, anamorphic light streaks, teal-and-orange colour grading, vignette, film grain and a speed blur
+- Reflections: glass towers, clearcoat car paint and an animated ocean all reflect a live sky with procedural clouds
+- Weather: clear spells, overcast and storms with rain, wet puddled streets, headlight beams, lightning and thunder
+- Cinematic camera (V): letterboxed, film-style shots that cut automatically; the title screen uses it as an attract mode
+- Graphics presets: Low (phones), High, and Ultra (cinematic), with automatic step-down if the frame rate drops
 - Three procedural radio stations, engine/siren/surf sound, all synthesised with Web Audio
 - Minimap with GPS route, full map, cash pickups, stunt bonuses and saved progress
 - Touch controls for phones and tablets, with automatic low-graphics mode
@@ -35,6 +40,7 @@ Everything is made in code: the city, cars, people, textures, sky and radio musi
 | Punch | Click or Q | HIT |
 | Horn, radio | H, R | RADIO |
 | Map, camera distance | M, C | MAP |
+| Cinematic camera | V | CINE |
 | Pause | Esc | PAUSE |
 
 ## Code layout
@@ -49,7 +55,10 @@ Everything is made in code: the city, cars, people, textures, sky and radio musi
 | `src/player.js` | On-foot controls, entering/stealing cars, punching |
 | `src/wanted.js` | Heat, wanted stars, police spawning, evasion and arrests |
 | `src/missions.js` | Mission scripts, markers, dialogue |
-| `src/sky.js` | Time of day, sun/moon light, sky dome, clouds |
+| `src/sky.js` | Time of day, sun/moon light, sky dome with clouds, baked reflections |
+| `src/post.js` | Post-processing: bloom, light shafts, flare, streaks, grading, letterbox |
+| `src/weather.js` | Cloud cover, rain, wet streets, lightning |
+| `src/cinecam.js` | Cinematic camera director |
 | `src/hud.js` | HUD, minimap, GPS and full map |
 | `src/audio.js` | Synthesised sound effects and radio stations |
 | `src/effects.js` | Particles, skid marks, explosion flashes |

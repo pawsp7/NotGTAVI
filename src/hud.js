@@ -86,6 +86,8 @@ export class Hud {
 
   fade(on) { this.el.fade.classList.toggle('on', on); }
 
+  setCinematic(on) { this.el.hud.classList.toggle('cine', on); }
+
   toggleMap(open) {
     this.mapOpen = open;
     this.el.mapWrap.hidden = !open;
